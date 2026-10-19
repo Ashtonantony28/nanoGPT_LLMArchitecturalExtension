@@ -71,6 +71,7 @@ class GPTConfig:
     use_moe: bool = False
     num_experts: int = 8
     num_experts_per_tok: int = 2
+    moe_aux_coef: float = 0.01       # weight on the load-balancing loss (not applied yet, see SG6)
 
     # Memory / training efficiency
     gradient_checkpointing: bool = False

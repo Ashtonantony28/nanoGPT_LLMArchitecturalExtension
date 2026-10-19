@@ -335,6 +335,8 @@ def _apply_to_caller_globals() -> None:
             frame = frame.f_back
             if frame is None:
                 break
+            if frame.f_code.co_filename.startswith("<"):
+                continue  # import machinery frames such as <frozen importlib._bootstrap>
             caller_file = os.path.abspath(frame.f_globals.get("__file__", ""))
             if caller_file != current_file:
                 target_globals = frame.f_globals
