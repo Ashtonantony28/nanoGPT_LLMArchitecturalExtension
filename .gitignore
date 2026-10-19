@@ -19,3 +19,5 @@ wandb/
 runs/
 .pytest_cache/
 .DS_Store
+data/shakespeare_char/
+data/openwebtext/
