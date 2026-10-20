@@ -23,7 +23,6 @@ Resume from checkpoint::
 from __future__ import annotations
 
 import contextlib
-import math
 import os
 import time
 from typing import Any, Dict, Optional, Tuple
@@ -69,6 +68,7 @@ bias: bool = True
 attention_type: str = 'standard'       # 'standard' | 'gqa'
 n_kv_heads: Optional[int] = None       # for GQA; None => n_head (MHA)
 pos_embedding: str = 'learned'         # 'learned' | 'rope'
+rope_theta: float = 10000.0
 norm_type: str = 'layernorm'           # 'layernorm' | 'rmsnorm'
 activation: str = 'gelu'              # 'gelu' | 'swiglu'
 use_lora: bool = False
@@ -77,6 +77,7 @@ lora_alpha: float = 16.0
 use_moe: bool = False
 num_experts: int = 8
 num_experts_per_tok: int = 2
+moe_aux_coef: float = 0.01
 gradient_checkpointing: bool = False
 
 # Optimiser
@@ -186,58 +187,15 @@ if master_process:
 
 from model import GPT, GPTConfig              # noqa: E402
 from data.loader import get_batch, get_dataset_path  # noqa: E402
+from optim.schedules import get_lr_schedule  # noqa: E402
 
-# Learning rate schedule — import from optim/schedules.py if available, else
-# use an inline implementation so the script is self-contained.
-# TODO: migrate fully to optim/schedules.py once that module is implemented.
-try:
-    from optim.schedules import get_lr_schedule as _get_lr_schedule  # type: ignore
-
-    def get_lr(it: int) -> float:
-        """Delegate to optim.schedules.get_lr_schedule."""
-        scheduler = _get_lr_schedule(
-            schedule=lr_schedule,
-            learning_rate=learning_rate,
-            min_lr=min_lr,
-            warmup_iters=warmup_iters,
-            lr_decay_iters=lr_decay_iters,
-        )
-        return scheduler(it)
-
-except (ImportError, AttributeError):
-
-    def get_lr(it: int) -> float:  # type: ignore[misc]
-        """Inline LR schedule: linear warmup + cosine/linear/constant decay.
-
-        Args:
-            it: Current training iteration (0-based).
-
-        Returns:
-            Learning rate for this iteration.
-        """
-        # 1. Linear warmup phase.
-        if it < warmup_iters:
-            return learning_rate * (it + 1) / (warmup_iters + 1)
-
-        # 2. After decay horizon: clamp to min_lr.
-        if it > lr_decay_iters:
-            return min_lr
-
-        # 3. Decay phase.
-        if not decay_lr or lr_schedule == 'constant':
-            return learning_rate
-
-        progress = (it - warmup_iters) / max(1, lr_decay_iters - warmup_iters)
-        progress = max(0.0, min(1.0, progress))
-
-        if lr_schedule == 'cosine':
-            coeff = 0.5 * (1.0 + math.cos(math.pi * progress))
-        elif lr_schedule == 'linear':
-            coeff = 1.0 - progress
-        else:
-            coeff = 1.0  # 'constant' after warmup
-
-        return min_lr + coeff * (learning_rate - min_lr)
+lr_fn = get_lr_schedule(
+    schedule_type=lr_schedule,
+    learning_rate=learning_rate,
+    min_lr=min_lr,
+    warmup_iters=warmup_iters,
+    lr_decay_iters=lr_decay_iters,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +236,7 @@ def _build_model_args() -> Dict[str, Any]:
         attention_type=attention_type,
         n_kv_heads=n_kv_heads,
         pos_embedding=pos_embedding,
+        rope_theta=rope_theta,
         norm_type=norm_type,
         activation=activation,
         use_lora=use_lora,
@@ -286,6 +245,7 @@ def _build_model_args() -> Dict[str, Any]:
         use_moe=use_moe,
         num_experts=num_experts,
         num_experts_per_tok=num_experts_per_tok,
+        moe_aux_coef=moe_aux_coef,
         gradient_checkpointing=gradient_checkpointing,
     )
 
@@ -523,7 +483,7 @@ while iter_num < max_iters and not _early_stop:
     # -----------------------------------------------------------------------
     # Set learning rate for this iteration.
     # -----------------------------------------------------------------------
-    lr = get_lr(iter_num) if decay_lr else learning_rate
+    lr = lr_fn(iter_num) if decay_lr else learning_rate
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
