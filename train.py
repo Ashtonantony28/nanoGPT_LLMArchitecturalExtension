@@ -344,6 +344,7 @@ if ddp:
 # Optimiser
 # ---------------------------------------------------------------------------
 
+raw_model.freeze_base()
 optimizer = raw_model.configure_optimizers(
     weight_decay=weight_decay,
     learning_rate=learning_rate,

@@ -545,3 +545,10 @@ class GPT(nn.Module):
             if k not in current_sd:
                 raise KeyError(f"Unexpected key in LoRA state dict: {k!r}")
             current_sd[k].copy_(v)
+
+    def freeze_base(self) -> None:
+        """Freeze every parameter except LoRA matrices. No-op without LoRA."""
+        if not self.config.use_lora:
+            return
+        for name, p in self.named_parameters():
+            p.requires_grad_("lora_" in name)
