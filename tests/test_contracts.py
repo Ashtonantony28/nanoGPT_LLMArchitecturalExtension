@@ -81,3 +81,10 @@ def test_configurator_applies_overrides_on_import(tmp_path):
         capture_output=True, text=True, env=env, check=True,
     ).stdout
     assert out.strip() == "5"
+
+
+def test_freeze_base_called_before_optimizer():
+    attrs = [n for n in ast.walk(_train_ast()) if isinstance(n, ast.Attribute)]
+    order = [n.attr for n in sorted(attrs, key=lambda n: n.lineno)
+             if n.attr in ("freeze_base", "configure_optimizers")]
+    assert order == ["freeze_base", "configure_optimizers"]

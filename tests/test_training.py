@@ -7,6 +7,7 @@ import tempfile
 import os
 
 from model import GPT, GPTConfig
+from models.extensions import LoRALinear
 from optim.schedules import cosine_schedule, linear_schedule, constant_schedule, get_lr_schedule
 
 
@@ -285,3 +286,65 @@ class TestCheckpointing:
         sd2 = model2.get_lora_state_dict()
         for k in sd1:
             assert torch.allclose(sd1[k], sd2[k])
+
+
+# ---------------------------------------------------------------------------
+# LoRA freezing
+# ---------------------------------------------------------------------------
+
+def make_lora_model():
+    torch.manual_seed(42)
+    cfg = GPTConfig(
+        n_layer=2, n_head=2, n_embd=64, block_size=32, vocab_size=100,
+        dropout=0.0, use_lora=True, lora_rank=4, lora_alpha=8.0,
+    )
+    model = GPT(cfg)
+    model.freeze_base()
+    return model, cfg
+
+
+class TestLoRAFreeze:
+    def test_lora_trainable_params_match_rank_formula(self):
+        model, _ = make_lora_model()
+        layers = [m for m in model.modules() if isinstance(m, LoRALinear)]
+        expected = sum(m.rank * (m.in_features + m.out_features) for m in layers)
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        assert trainable == expected
+
+    def test_lora_base_weights_unchanged_after_steps(self):
+        model, cfg = make_lora_model()
+        base = {n: p.detach().clone() for n, p in model.named_parameters() if "lora_" not in n}
+        opt = model.configure_optimizers(
+            weight_decay=0.1, learning_rate=1e-2, betas=(0.9, 0.95), device_type="cpu",
+        )
+        x, y = make_random_batch(cfg)
+        for _ in range(10):
+            _, loss = model(x, y)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        for n, p in model.named_parameters():
+            if "lora_" not in n:
+                assert torch.equal(p, base[n]), n
+        assert any(p.abs().sum() > 0 for n, p in model.named_parameters() if "lora_B" in n)
+
+    def test_lora_merge_matches_unmerged_forward(self):
+        model, cfg = make_lora_model()
+        with torch.no_grad():
+            for m in model.modules():
+                if isinstance(m, LoRALinear):
+                    m.lora_B.normal_(std=0.02)
+        x, _ = make_random_batch(cfg)
+        model.eval()
+        with torch.no_grad():
+            before, _ = model(x)
+            for m in model.modules():
+                if isinstance(m, LoRALinear):
+                    m.merge()
+            after, _ = model(x)
+        assert (before - after).abs().max().item() < 1e-5
+
+    def test_lora_freeze_is_noop_without_lora(self):
+        model, _ = make_tiny_model()
+        model.freeze_base()
+        assert all(p.requires_grad for p in model.parameters())
