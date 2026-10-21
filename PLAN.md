@@ -1,6 +1,6 @@
 # PLAN: nanoGPT Extended (`Ashtonantony28/nanoGPT_LLMArchitecturalExtension`)
 
-Status: **SG0–SG2 built on `plan/nanogpt-fixes`, awaiting review before SG3.**
+Status: **SG0–SG3 built on `plan/nanogpt-fixes`, awaiting review before SG4.**
 Base branch: `claude/explore-nanogpt-8L1Rs`. Work branch when approved: `plan/nanogpt-fixes`.
 Source of findings: `/mnt/project-files/project-analysis/nanogpt-extended.md` (section numbers cited as §).
 
@@ -80,7 +80,7 @@ Dependencies: SG0 first. SG1 runs in parallel with SG0. SG2 gates SG3, SG5, SG10
 
 ### SG3. LoRA freezing
 - **Owner:** unassigned
-- **Status:** not started
+- **Status:** done. `GPT.freeze_base()` in `model.py`, called in `train.py` before `configure_optimizers`. 8192 trainable params for the 2-layer LoRA config (matches Σ r·(in+out)). Base weights bit-identical after 10 steps. Merge equals unmerged within 1e-5. Mutation check: disabling freeze fails 2 tests.
 - **Scope:** implement `GPT.freeze_base()` (contract 4). Wire it into `train.py` when `use_lora`.
 - **Acceptance:**
   - Trainable parameter count equals Σ over `LoRALinear` of `r·(in+out)`, plus any `lora_`-free parameters that are intentionally trainable (none by default).
