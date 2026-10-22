@@ -1,6 +1,6 @@
 # PLAN: nanoGPT Extended (`Ashtonantony28/nanoGPT_LLMArchitecturalExtension`)
 
-Status: **SG0–SG3 built on `plan/nanogpt-fixes`, awaiting review before SG4.**
+Status: **SG0–SG4 built on `plan/nanogpt-fixes`, awaiting review before SG5.**
 Base branch: `claude/explore-nanogpt-8L1Rs`. Work branch when approved: `plan/nanogpt-fixes`.
 Source of findings: `/mnt/project-files/project-analysis/nanogpt-extended.md` (section numbers cited as §).
 
@@ -90,7 +90,7 @@ Dependencies: SG0 first. SG1 runs in parallel with SG0. SG2 gates SG3, SG5, SG10
 
 ### SG4. Pretrained GPT-2 loading
 - **Owner:** unassigned
-- **Status:** not started
+- **Status:** done for name mapping and override keys. Logits vs real `gpt2` not run: `huggingface.co` is blocked in this container, so `test_from_pretrained_gpt2_logits_match_hf` skips. Offline check against a random tiny HF GPT-2 passes within 1e-4; mutations to the `ff` rename and transpose each fail it.
 - **Scope:** map weights by name (`ff`↔`mlp`, `ln_2`, `attn`), not position (`model.py:396-416`). Allow the override keys that `train.py:342-353` passes, or remove them from that call.
 - **Acceptance:** for a fixed token batch, `GPT.from_pretrained('gpt2')` logits match `transformers.GPT2LMHeadModel` logits within `1e-4` max abs diff.
 - **Verify:** `python -m pytest tests/test_pretrained.py -q` (new file, skipped if the HF cache is absent, with a note in the output)

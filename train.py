@@ -301,18 +301,13 @@ elif init_from.startswith('gpt2'):
         print(f"Initialising from OpenAI GPT-2 weights: {init_from}")
     override_args = dict(
         dropout=dropout,
-        attention_type=attention_type,
-        n_kv_heads=n_kv_heads,
-        pos_embedding=pos_embedding,
-        norm_type=norm_type,
-        activation=activation,
         use_lora=use_lora,
         lora_rank=lora_rank,
         lora_alpha=lora_alpha,
     )
     model = GPT.from_pretrained(init_from, override_args)
     # Synchronise model_args with what was actually loaded.
-    for k in ('n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size'):
+    for k in model_args:
         model_args[k] = getattr(model.config, k)
 else:
     raise ValueError(

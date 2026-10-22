@@ -353,9 +353,9 @@ class GPT(nn.Module):
         )
         override_args = override_args or {}
 
-        # Only dropout can be safely overridden (it is not part of the weights).
-        assert all(k == "dropout" for k in override_args), (
-            "Only 'dropout' may be overridden when loading from pretrained weights."
+        # Only keys that leave the GPT-2 weight layout unchanged may be overridden.
+        assert set(override_args) <= {"dropout", "use_lora", "lora_rank", "lora_alpha"}, (
+            "Only 'dropout' and LoRA settings may be overridden when loading from pretrained weights."
         )
 
         # Map model type → GPT-2 config.
@@ -372,51 +372,42 @@ class GPT(nn.Module):
         config_args["block_size"] = 1024
         config_args["bias"]       = True
 
-        if "dropout" in override_args:
-            config_args["dropout"] = override_args["dropout"]
+        config_args.update(override_args)
 
         config = GPTConfig(**config_args)
         model = cls(config)
 
-        sd = model.state_dict()
-        sd_keys = [k for k in sd if not k.endswith(".attn.bias")]  # ignore causal mask buffers
-
-        # Load the HuggingFace model.
         from transformers import GPT2LMHeadModel  # type: ignore
-        hf_model = GPT2LMHeadModel.from_pretrained(model_type)
-        hf_sd = hf_model.state_dict()
-
-        # HuggingFace stores Conv1D weights transposed relative to nn.Linear.
-        transposed = [
-            "attn.c_attn.weight",
-            "attn.c_proj.weight",
-            "mlp.c_fc.weight",
-            "mlp.c_proj.weight",
-        ]
-
-        hf_keys = [k for k in hf_sd if not k.endswith(".attn.masked_bias") and
-                                        not k.endswith(".attn.bias")]
-        assert len(hf_keys) == len(sd_keys), (
-            f"Mismatch: {len(hf_keys)} HF keys vs {len(sd_keys)} model keys"
-        )
-
-        for k_hf, k_sd in zip(hf_keys, sd_keys):
-            if any(k_hf.endswith(t) for t in transposed):
-                assert hf_sd[k_hf].shape[::-1] == sd[k_sd].shape, (
-                    f"Shape mismatch for {k_hf}: "
-                    f"HF {hf_sd[k_hf].shape} vs model {sd[k_sd].shape}"
-                )
-                with torch.no_grad():
-                    sd[k_sd].copy_(hf_sd[k_hf].t())
-            else:
-                assert hf_sd[k_hf].shape == sd[k_sd].shape, (
-                    f"Shape mismatch for {k_hf}: "
-                    f"HF {hf_sd[k_hf].shape} vs model {sd[k_sd].shape}"
-                )
-                with torch.no_grad():
-                    sd[k_sd].copy_(hf_sd[k_hf])
-
+        model.load_hf_state_dict(GPT2LMHeadModel.from_pretrained(model_type).state_dict())
         return model
+
+    def load_hf_state_dict(self, hf_sd: Dict[str, torch.Tensor]) -> None:
+        """Copy a HuggingFace GPT-2 state dict into this model, matching by name.
+
+        HF stores Conv1D weights transposed relative to nn.Linear, and names the
+        MLP ``mlp`` where this model uses ``ff``. LoRA parameters are absent from
+        the HF dict and keep their initial values.
+        """
+        sd = self.state_dict()
+        transposed = ("attn.c_attn.weight", "attn.c_proj.weight", "mlp.c_fc.weight", "mlp.c_proj.weight")
+        loaded = set()
+        for k_hf, v in hf_sd.items():
+            if k_hf.endswith((".attn.masked_bias", ".attn.bias", "lm_head.weight")):
+                continue  # causal-mask buffers; lm_head is tied to wte
+            k = k_hf.replace(".mlp.", ".ff.")
+            if k_hf.endswith(transposed):
+                v = v.t()
+            assert sd[k].shape == v.shape, (
+                f"Shape mismatch for {k_hf}: HF {v.shape} vs model {sd[k].shape}"
+            )
+            with torch.no_grad():
+                sd[k].copy_(v)
+            loaded.add(k)
+        missing = [
+            k for k in sd
+            if k not in loaded and "lora_" not in k and not k.endswith((".attn.bias", "lm_head.weight"))
+        ]
+        assert not missing, f"Keys not loaded from HF state dict: {missing}"
 
     # ── Optimizer factory ────────────────────────────────────────────────────
 
